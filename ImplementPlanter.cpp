@@ -18,12 +18,15 @@
  */
 
 #include <ImplementPlanter.h>
-//#define DEBUG
 
 //------------
 // Constructor
 //------------
-ImplementPlanter::ImplementPlanter(){
+#ifdef GPS
+ImplementPlanter::ImplementPlanter(VehicleGps * _gps){
+#else
+ImplementPlanter::ImplementPlanter(VehicleTractor * _tractor){
+#endif
   // Pin configuration
   // Inputs
   pinMode(PLANTINGELEMENT_PIN, INPUT);
@@ -38,8 +41,10 @@ ImplementPlanter::ImplementPlanter(){
   analogReference(DEFAULT);
   pinMode(POSITION_SENS_PIN, INPUT);
   digitalWrite(POSITION_SENS_PIN, LOW);
+#ifndef GPS
   pinMode(XTE_SENS_PIN, INPUT);
   digitalWrite(XTE_SENS_PIN, LOW);
+#endif
 
   // Get calibration data from EEPROM otherwise use defaults
   if (!readCalibrationData()){
@@ -62,21 +67,18 @@ ImplementPlanter::ImplementPlanter(){
     man_pwm = 90;
     auto_pwm = 70;
 
-    // error margin 170
-    error = 2;
+    // offset 180
+    offset = 0;
     
 #ifdef DEBUG
     Serial.println("No calibration data found");
 #endif
   }
 
-  // Get latest offset from EEPROM
-  readOffset(); // 180
-
   // Calibration points for position and xte
-  position_calibration_points[0] = -20;
+  position_calibration_points[0] = -6;
   position_calibration_points[1] = 0;
-  position_calibration_points[2] = 20;
+  position_calibration_points[2] = 6;
   position = 0;
   last_position = 0;
 
@@ -117,107 +119,112 @@ ImplementPlanter::ImplementPlanter(){
 #ifdef DEBUG
   printCalibrationData();
 #endif
+
+  // Connected classes
+#ifdef GPS
+  gps = _gps;
+#else
+  tractor = _tractor;
+#endif
 }
 
 // ----------------------------------
 // Method for updating implement data
 // ----------------------------------
-void ImplementPlanter::update(int _correction, boolean _reset){
+void ImplementPlanter::update(byte _mode){
+  mode = _mode;
+#ifdef GPS
   // update offset, xte, position and setpoint
   if (millis() - update_age >= 200){
-    // Write EEPROM if nescessary
-    if (_correction != 0){
-      setOffset(_correction);
-    }
     // Update xte, position and setpoint
-    xte = getActualXte();
+    xte = gps->getXte();
+    speed = gps->getSpeedMs();
     position = getActualPosition();
 
-    setSetpoint(_reset);
+    setSetpoint();
     update_age = millis();    
   }
-}
-
-// --------------------------------------------
-// Method for updating implement data using gps
-// --------------------------------------------
-void ImplementPlanter::update(int _correction, boolean _reset, int _xte){
+#else
   // update offset, xte, position and setpoint
-  if (millis() - update_age >= 200){
-    // Write EEPROM if nescessary
-    if (_correction != 0){
-      setOffset(_correction);
-    }
+  if (millis() - update_age >= 25){
     // Update xte, position and setpoint
-    xte = _xte;
-    position = getActualPosition();
+    if (update_flag){
+      update_flag = false;
+      
+      // read xte, reset ad converter to position input
+      xte = getActualXte();
+      speed = tractor->getSpeedMs();
+      getActualPosition();
+    }
+    else {
+      update_flag = true;
+      
+      // read position, reset ad converter to xte input
+      position = getActualPosition();
+      getActualXte();
+    }
 
-    setSetpoint(_reset);
+    setSetpoint();
     update_age = millis();    
   }
+#endif
 }
 
 // ------------------------------
 // Method for adjusting implement
 // ------------------------------
-void ImplementPlanter::adjust(boolean _auto, int _direction){
+void ImplementPlanter::adjust(int _direction){
   int _actual_position;
   byte _pwm;
 
-  if (_auto){
-    _actual_position = getActualPosition() + offset;
+  if (mode == 0){
+    _actual_position = position;
     _pwm = auto_pwm;
+    digitalWrite(OUTPUT_BYPASS, HIGH);
   }
   else {
-    _actual_position = setpoint - (_direction * (error + 1) * 2);
+    _actual_position = setpoint - _direction;
     _pwm = man_pwm;
+    if (_actual_position != setpoint) {
+      digitalWrite(OUTPUT_BYPASS, HIGH);
+    }
+    else {
+      digitalWrite(OUTPUT_BYPASS, LOW);
+    }
   }
 
   // Adjust tree including error
-  if (_actual_position < setpoint - error){
-    if (shutoff_dir > 0 || millis() - shutoff_timer < shutoff_time){
-      digitalWrite(OUTPUT_WIDE, LOW);
-      digitalWrite(OUTPUT_NARROW, HIGH);
-      analogWrite(OUTPUT_BYPASS, _pwm);
-      digitalWrite(OUTPUT_LED, HIGH);
-      if (last_position != _actual_position){
-        shutoff_timer = millis();
-        shutoff_dir = 1;
-      }
-    }
-    else {
-      digitalWrite(OUTPUT_WIDE, LOW);
-      digitalWrite(OUTPUT_NARROW, LOW);
-      analogWrite(OUTPUT_BYPASS, 0);
-      digitalWrite(OUTPUT_LED, LOW);      
-    }
+  if (_actual_position < setpoint){
+//TODO shutoff < 0
+    /*
+    digitalWrite(OUTPUT_WIDE, LOW);
+    digitalWrite(OUTPUT_NARROW, HIGH);
+    analogWrite(OUTPUT_BYPASS, _pwm);
+    /*/
+    analogWrite(OUTPUT_WIDE, _pwm);
+    digitalWrite(OUTPUT_NARROW, LOW);
+ 
+    digitalWrite(OUTPUT_LED, HIGH);
   }
-  else if (_actual_position > setpoint + error){
-    if (shutoff_dir < 0 || millis() - shutoff_timer < shutoff_time){
-      digitalWrite(OUTPUT_WIDE, HIGH);
-      digitalWrite(OUTPUT_NARROW, LOW);
-      analogWrite(OUTPUT_BYPASS, _pwm);
-      digitalWrite(OUTPUT_LED, HIGH);
-      if (last_position != _actual_position){
-        shutoff_timer = millis();
-        shutoff_dir = -1;
-      }
-    }
-    else{
-      digitalWrite(OUTPUT_WIDE, LOW);
-      digitalWrite(OUTPUT_NARROW, LOW);
-      analogWrite(OUTPUT_BYPASS, 0);
-      digitalWrite(OUTPUT_LED, LOW);
-    }
+  else if (_actual_position > setpoint){
+//TODO shutoff > 0
+    /*
+    digitalWrite(OUTPUT_WIDE, HIGH);
+    digitalWrite(OUTPUT_NARROW, LOW);
+    analogWrite(OUTPUT_BYPASS, _pwm);
+    /*/
+    digitalWrite(OUTPUT_WIDE, LOW);
+    analogWrite(OUTPUT_NARROW, _pwm);
+      
+    digitalWrite(OUTPUT_LED, HIGH);
   }
   else {
     digitalWrite(OUTPUT_WIDE, LOW);
     digitalWrite(OUTPUT_NARROW, LOW);
-    analogWrite(OUTPUT_BYPASS, 0);
+    //digitalWrite(OUTPUT_BYPASS, LOW);
     digitalWrite(OUTPUT_LED, LOW);
     shutoff_timer = millis();
   }
-  last_position = _actual_position;
 }
 
 // --------------------------------------------
@@ -283,12 +290,13 @@ int ImplementPlanter::getActualXte(){
 // ---------------------------
 // Method for setting setpoint
 // ---------------------------
-void ImplementPlanter::setSetpoint(boolean _reset){
+void ImplementPlanter::setSetpoint(){
   int _previous_hist_count;
   int _xte_avg;
   int _dxte;
   int _dxte_calc;
   int _D_factor;
+  int _xte_cor = xte + offset;
 
   _previous_hist_count= hist_count - 1;
 
@@ -298,27 +306,29 @@ void ImplementPlanter::setSetpoint(boolean _reset){
   }
 
   // Set xte sum , delta and averages;
-  xte_sum = xte_sum - xte_hist[hist_count] + xte;
+  xte_sum = xte_sum - xte_hist[hist_count] + _xte_cor;
   _xte_avg = xte_sum / hist_time;
-  _dxte = xte - xte_hist[_previous_hist_count];
-  _dxte_calc = xte;//sqrt(abs(_xte))
+  _dxte = _xte_cor - xte_hist[_previous_hist_count];
+  _dxte_calc = _xte_cor;//sqrt(abs(_xte))
   _D_factor = _dxte - _dxte_calc;
 
   // Update XTE history
-  xte_hist[hist_count] = xte;
+  xte_hist[hist_count] = _xte_cor;
 
-  P = float(xte) * KP / 100.0f; 
+  P = float(_xte_cor) * KP / 100.0f; 
   I = float(_xte_avg) * KI / 100.0f;
-  if (_D_factor > 1 || _D_factor < -1){
-    D = D - (float(_D_factor) * KD / 100.0f);
-    if (D > 10) {
-      D = 10;
-    }
-    else if (D < -10) {
-      D = -10;
-    }
+  D = D - (float(_D_factor) * KD / 100.0f) * speed;
+  
+  // Restrict D
+  if (D > 15) {
+    D = 15;
   }
-  if (_reset){
+  else if (D < -15) {
+    D = -15;
+  }
+
+  // Reset D
+  if (mode){
     D = 0;
   }
 
@@ -327,48 +337,18 @@ void ImplementPlanter::setSetpoint(boolean _reset){
   hist_count++; 
 }
 
-// ---------------------------------------------------------
-// Method for setting implement offset and writing to EEPROM
-// ---------------------------------------------------------
-void ImplementPlanter::setOffset(int _correction){
-  offset += _correction;
-  if (offset > 75 || offset < -75){
-    offset = 0;
-  }
-
-  // Write each byte separately to the memory
-  EEPROM.write(180, highByte(offset));
-  EEPROM.write(181, lowByte(offset));
-}
-
-// -----------------------------------------------
-// Method for reading implement offset from EEPROM
-// -----------------------------------------------
-void ImplementPlanter::readOffset(){
-  if (EEPROM.read(180) < 255){
-    // Read offset (2 bytes)
-    offset = word(EEPROM.read(180), EEPROM.read(181));
-    if (offset > 75 || offset < -75){
-      offset = 0;
-    }
-  }
-  else{
-    offset = 0;
-  }
-}
-
 // ----------------------------------------------
 // Method for reading calibrationdata from EEPROM
 // ----------------------------------------------
 boolean ImplementPlanter::readCalibrationData(){
   // Read amount of startups and add 1
-  EEPROM.write(0, EEPROM.read(0));
+  EEPROM.write(0, EEPROM.read(0) + 1);
   
   // Read offset and XTE calibration data
   if (EEPROM.read(100) != 255 || EEPROM.read(110) != 255 ||
     EEPROM.read(120) != 255 || EEPROM.read(130) != 255 ||
     EEPROM.read(140) != 255 || EEPROM.read(150) != 255 ||
-    EEPROM.read(160) != 255 || EEPROM.read(170) != 255){
+    EEPROM.read(160) != 255 || EEPROM.read(180) != 255){
 
     // Read from eeprom highbyte, then lowbyte, and combine into words
     for(int i = 0; i < 3; i++){
@@ -378,23 +358,25 @@ boolean ImplementPlanter::readCalibrationData(){
       xte_calibration_data[i] = word(EEPROM.read(k+110), EEPROM.read(k+111));
     }
 
-    KP = float(word(EEPROM.read(120), EEPROM.read(121)) / 100);
-    KI = float(word(EEPROM.read(130), EEPROM.read(131)) / 100);
-    KD = float(word(EEPROM.read(140), EEPROM.read(141)) / 100);
+    KP = EEPROM.read(120);
+    KI = EEPROM.read(130);
+    KD = EEPROM.read(140);
 
     man_pwm = EEPROM.read(150);
     auto_pwm = EEPROM.read(160);
-
-    //Read error max == 10 cm
-    if(EEPROM.read(170) < 10 && EEPROM.read(170) > 0) {
-      // Read error
-      error = EEPROM.read(170);
+    
+    if (EEPROM.read(180) < 255 || EEPROM.read(181) < 255){
+      // Read offset (2 bytes)
+      offset = word(EEPROM.read(180), EEPROM.read(181));
+      if (offset > 20 || offset < -20){
+        offset = 0;
+      }
     }
     else {
-      error = 2;  //default to 2
+      offset = 0;
     }
   }
-  else{
+  else {
     return false;
   }
   return true;
@@ -420,6 +402,7 @@ void ImplementPlanter::printCalibrationData(){
   }
   Serial.println("-------------------------------");
 
+#ifndef GPS
   Serial.println("XTE calibration data");
   for (int i = 0; i < 3; i++){
     Serial.print(xte_calibration_data[i]);
@@ -427,7 +410,8 @@ void ImplementPlanter::printCalibrationData(){
     Serial.println(xte_calibration_points[i]);
   }
   Serial.println("-------------------------------");
-
+#endif
+  
   Serial.println("KP");
   Serial.println(KP);
   Serial.println("-------------------------------");
@@ -447,10 +431,6 @@ void ImplementPlanter::printCalibrationData(){
   Serial.println("PWM manual");
   Serial.println(man_pwm);
   Serial.println("-------------------------------");
-
-  Serial.println("Error margin");
-  Serial.println(error);
-  Serial.println("-------------------------------");
 }
 
 // --------------------------------------------
@@ -466,18 +446,15 @@ void ImplementPlanter::writeCalibrationData(){
     EEPROM.write(k+111, lowByte(xte_calibration_data[i]));  // 111, 113, 115
   }
 
-  EEPROM.write(120, highByte(int(KP*100))); // 120
-  EEPROM.write(121, lowByte(int(KP*100)));  // 121
-
-  EEPROM.write(130, highByte(int(KI*100))); // 130
-  EEPROM.write(131, lowByte(int(KI*100)));  // 131
-
-  EEPROM.write(140, highByte(int(KD*100))); // 140
-  EEPROM.write(141, lowByte(int(KD*100)));  // 141
-
+  EEPROM.write(120, KP); // 120
+  EEPROM.write(130, KI); // 130
+  EEPROM.write(140, KD); // 140
+  
   EEPROM.write(150, man_pwm);  //150
   EEPROM.write(160, auto_pwm); //160
-  EEPROM.write(170, error);   // 170
+  
+  EEPROM.write(180, highByte(offset)); // 180
+  EEPROM.write(181, lowByte(offset)); // 181
 
 #ifdef DEBUG
   Serial.println("Calibration data written");

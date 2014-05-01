@@ -22,7 +22,9 @@
 
 #include <Arduino.h>
 #include <EEPROM.h>
-#include <ConfigImplement.h>
+#include <ConfigImplementPlanter.h>
+#include <VehicleGps.h>
+#include <VehicleTractor.h>
 
 // software version of this library
 #define PLANTER_VERSION 0.1
@@ -43,14 +45,17 @@ private:
   int xte_calibration_data[3];
   int xte_calibration_points[3];
   int xte;
+  
+  int speed;
 
   // Update timer
   unsigned long update_age;
+  boolean update_flag;
 
   // Variables concerning adjust loop
+  byte mode;
   int setpoint;
   int offset;
-  byte error;
   byte man_pwm;
   byte auto_pwm;
 
@@ -60,23 +65,30 @@ private:
 
   int dxte;         //DXTE
 
-  int hist_count;   //Counter of sum
-  int hist_time;   //Integration time (seconds * 5)
+  byte hist_count;   //Counter of sum
+  byte hist_time;   //Integration time (seconds * 5)
 
   // PID variables
   float P;
-  int KP;
+  byte KP;
 
   float I;
-  int KI;
+  byte KI;
 
   float D;
-  int KD;
+  byte KD;
 
   // Timers for end shutoff
   int shutoff_time;
   int shutoff_dir;
   unsigned long shutoff_timer;
+  
+  // Objects
+#ifdef GPS
+  VehicleGps * gps;
+#else
+  VehicleTractor * tractor;
+#endif
 
   //-------------------------------------------------------------
   // private member functions implemented in ImplementPlanter.cpp
@@ -84,8 +96,7 @@ private:
   int getActualXte();
   int getActualPosition();
 
-  void setSetpoint(boolean _reset);
-  void setOffset(int _correction);
+  void setSetpoint();
 
   void readOffset();
   boolean readCalibrationData();
@@ -99,11 +110,14 @@ public:
   // -----------------------------------------------------------
 
   // Constructor
-  ImplementPlanter();
+#ifdef GPS
+  ImplementPlanter(VehicleGps * _gps);
+#else
+  ImplementPlanter(VehicleTractor * _tractor);
+#endif
 
-  void update(int _correction, boolean _reset);
-  void update(int _correction, boolean _reset, int _xte);
-  void adjust(boolean _auto, int _direction);
+  void update(byte _mode);
+  void adjust(int _direction);
   void calibrate();
 
   // ----------------------------------------------------------------
@@ -136,11 +150,7 @@ public:
   inline int getSetpoint(){
     return setpoint;
   }
-  
-  inline int getOffset(){
-    return offset;
-  }
-  
+    
   inline int getPositionCalibrationPoint(int _i){
     return position_calibration_points[_i];
   }
@@ -149,15 +159,15 @@ public:
     return xte_calibration_points[_i];
   }
 
-  inline int getKP(){
+  inline byte getKP(){
     return KP;
   }
 
-  inline int getKI(){
+  inline byte getKI(){
     return KI;
   }
 
-  inline int getKD(){
+  inline byte getKD(){
     return KD;
   }
 
@@ -168,9 +178,9 @@ public:
   inline byte getPwmAuto(){
     return auto_pwm;
   }
-  
-  inline byte getError(){
-    return error;
+
+  inline int getOffset(){
+    return offset;
   }
 
   // -------
@@ -184,30 +194,28 @@ public:
     xte_calibration_data[_i] = analogRead(XTE_SENS_PIN);
   }
 
-  inline void setKP(int _value){
-    KP = abs(_value);
+  inline void setKP(byte _value){
+    KP = _value;
   }
 
-  inline void setKI(int _value){
-    KI = abs(_value);
+  inline void setKI(byte _value){
+    KI = _value;
   }
 
-  inline void setKD(int _value){
-    KD = abs(_value);
+  inline void setKD(byte _value){
+    KD = _value;
   }
 
   inline void setPwmMan(byte _value){
-    man_pwm = abs(_value);
+    man_pwm = _value;
   }
 
   inline void setPwmAuto(byte _value){
-    auto_pwm = abs(_value);
+    auto_pwm = _value;
   }
 
-  inline void setError(byte _value){
-    error = abs(_value);
+  inline void setOffset(int _value){
+    offset = _value;
   }
 };
 #endif
-
-
