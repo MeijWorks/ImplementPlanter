@@ -80,7 +80,8 @@ private:
 
   // Timers for end shutoff
   int shutoff_time;
-  int shutoff_dir;
+  boolean shutoff_wide;
+  boolean shutoff_narrow;
   unsigned long shutoff_timer;
   
   // Objects

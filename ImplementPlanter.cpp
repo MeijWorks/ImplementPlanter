@@ -24,9 +24,6 @@
 //------------
 #ifdef GPS
 ImplementPlanter::ImplementPlanter(VehicleGps * _gps){
-#else
-ImplementPlanter::ImplementPlanter(VehicleTractor * _tractor){
-#endif
   // Pin configuration
   // Inputs
   pinMode(PLANTINGELEMENT_PIN, INPUT);
@@ -41,10 +38,6 @@ ImplementPlanter::ImplementPlanter(VehicleTractor * _tractor){
   analogReference(DEFAULT);
   pinMode(POSITION_SENS_PIN, INPUT);
   digitalWrite(POSITION_SENS_PIN, LOW);
-#ifndef GPS
-  pinMode(XTE_SENS_PIN, INPUT);
-  digitalWrite(XTE_SENS_PIN, LOW);
-#endif
 
   // Get calibration data from EEPROM otherwise use defaults
   if (!readCalibrationData()){
@@ -109,7 +102,8 @@ ImplementPlanter::ImplementPlanter(VehicleTractor * _tractor){
 
   // End shutoff timers
   shutoff_time = SHUTOFF;
-  shutoff_dir = 0;
+  shutoff_wide = false;
+  shutoff_narrow = false;
   shutoff_timer = millis();
 
   // Update timer
@@ -127,6 +121,103 @@ ImplementPlanter::ImplementPlanter(VehicleTractor * _tractor){
   tractor = _tractor;
 #endif
 }
+#else
+ImplementPlanter::ImplementPlanter(VehicleTractor * _tractor){
+  // Pin configuration
+  // Inputs
+  pinMode(PLANTINGELEMENT_PIN, INPUT);
+  
+  // Outputs
+  pinMode(OUTPUT_WIDE, OUTPUT);
+  pinMode(OUTPUT_NARROW, OUTPUT);
+  pinMode(OUTPUT_BYPASS, OUTPUT);
+  pinMode(OUTPUT_LED, OUTPUT);
+
+  // Analog IO
+  analogReference(DEFAULT);
+  pinMode(POSITION_SENS_PIN, INPUT);
+  digitalWrite(POSITION_SENS_PIN, LOW);
+
+  pinMode(XTE_SENS_PIN, INPUT);
+  digitalWrite(XTE_SENS_PIN, LOW);
+
+  // Get calibration data from EEPROM otherwise use defaults
+  if (!readCalibrationData()){
+    // Default offset calibration set 100, 101
+    position_calibration_data[0] = 201;
+    position_calibration_data[1] = 428;
+    position_calibration_data[2] = 687;
+
+    // Default xte calibration set 110, 111
+    xte_calibration_data[0] = 201;
+    xte_calibration_data[1] = 428;
+    xte_calibration_data[2] = 687;
+
+    // PID constants 120, 121, 130, 131, 140, 141
+    KP = 50;
+    KI = 50;
+    KD = 1;
+
+    // pwm values for manual (150) and auto (160)
+    man_pwm = 90;
+    auto_pwm = 70;
+
+    // offset 180
+    offset = 0;
+    
+#ifdef DEBUG
+    Serial.println("No calibration data found");
+#endif
+  }
+
+  // Calibration points for position and xte
+  position_calibration_points[0] = -6;
+  position_calibration_points[1] = 0;
+  position_calibration_points[2] = 6;
+  position = 0;
+  last_position = 0;
+
+  xte_calibration_points[0] = -10;
+  xte_calibration_points[1] =  0;
+  xte_calibration_points[2] =  10;
+  xte = 0;
+
+  // Setpoint of ajust loop
+  setpoint = 0;
+
+  // PID integration and differentiation intervals
+  for (int i = 0; i < 50; i++){
+    xte_hist[i] = 0;
+  }
+  xte_sum = 0;      //Running sum of xte_hist
+  xte_avg = 0;      //Average of sum
+
+  dxte = 0;         //DXTE
+
+  hist_count = 0;   //Counter of sum
+  hist_time = 25;   //Integration time (seconds * 5)
+
+  // PID variables
+  P = 0;
+  I = 0;
+  D = 0;
+
+  // End shutoff timers
+  shutoff_time = SHUTOFF;
+  shutoff_wide = false;
+  shutoff_narrow = false;
+  shutoff_timer = millis();
+
+  // Update timer
+  update_age = millis();
+  
+  // Print calibration data
+#ifdef DEBUG
+  printCalibrationData();
+#endif
+  tractor = _tractor;
+}
+#endif
 
 // ----------------------------------
 // Method for updating implement data
@@ -180,51 +271,97 @@ void ImplementPlanter::adjust(int _direction){
   if (mode == 0){
     _actual_position = position;
     _pwm = auto_pwm;
+#ifdef RELAY
     digitalWrite(OUTPUT_BYPASS, HIGH);
+#endif  
   }
   else {
     _actual_position = setpoint - _direction;
     _pwm = man_pwm;
+#ifdef RELAY
     if (_actual_position != setpoint) {
       digitalWrite(OUTPUT_BYPASS, HIGH);
     }
     else {
       digitalWrite(OUTPUT_BYPASS, LOW);
     }
+#endif
   }
 
   // Adjust tree including error
-  if (_actual_position < setpoint){
-//TODO shutoff < 0
-    /*
+  //---------------------------
+  // Setpoint < actual position
+  //---------------------------
+  if (_actual_position < setpoint && !shutoff_narrow){
+#ifndef FACTORY
+  //TODO shutoff < 0
     digitalWrite(OUTPUT_WIDE, LOW);
     digitalWrite(OUTPUT_NARROW, HIGH);
     analogWrite(OUTPUT_BYPASS, _pwm);
-    /*/
-    analogWrite(OUTPUT_WIDE, _pwm);
-    digitalWrite(OUTPUT_NARROW, LOW);
- 
+#else
+    digitalWrite(OUTPUT_WIDE, LOW);
+    analogWrite(OUTPUT_NARROW, _pwm);
+#endif
     digitalWrite(OUTPUT_LED, HIGH);
+    
+    // End shutoff
+    if (_actual_position != last_position){
+      shutoff_timer = millis();
+    }
+    
+    if (shutoff_wide){
+      shutoff_narrow = false;
+      shutoff_wide = false;
+    }
+    
+    if (millis() - shutoff_timer > shutoff_time){
+      shutoff_narrow = true;
+      shutoff_wide = false;
+    }
   }
-  else if (_actual_position > setpoint){
-//TODO shutoff > 0
-    /*
+  //---------------------------
+  // Setpoint < actual position
+  //---------------------------
+  else if (_actual_position > setpoint && !shutoff_wide){
+#ifndef FACTORY
+  //TODO shutoff > 0
     digitalWrite(OUTPUT_WIDE, HIGH);
     digitalWrite(OUTPUT_NARROW, LOW);
     analogWrite(OUTPUT_BYPASS, _pwm);
-    /*/
-    digitalWrite(OUTPUT_WIDE, LOW);
-    analogWrite(OUTPUT_NARROW, _pwm);
-      
+#else
+    analogWrite(OUTPUT_WIDE, _pwm);
+    digitalWrite(OUTPUT_NARROW, LOW);
+#endif
     digitalWrite(OUTPUT_LED, HIGH);
+
+    // End shutoff
+    if (_actual_position != last_position){
+      shutoff_timer = millis();
+    }
+    
+    if (shutoff_narrow){
+      shutoff_wide = false;
+      shutoff_narrow = false;
+    }
+    
+    if (millis() - shutoff_timer > shutoff_time){
+      shutoff_narrow = false;
+      shutoff_wide = true;
+    }
   }
+  //-----------------
+  // Setpoint reached
+  //-----------------
   else {
     digitalWrite(OUTPUT_WIDE, LOW);
     digitalWrite(OUTPUT_NARROW, LOW);
-    //digitalWrite(OUTPUT_BYPASS, LOW);
+#ifndef RELAY
+    digitalWrite(OUTPUT_BYPASS, LOW);
+#endif
     digitalWrite(OUTPUT_LED, LOW);
     shutoff_timer = millis();
   }
+  last_position = _actual_position;
 }
 
 // --------------------------------------------
