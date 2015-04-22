@@ -1,6 +1,6 @@
 /*
   ImplementPlanter - a libary for a planter
- Copyright (C) 2011-2014 J.A. Woltjer.
+ Copyright (C) 2011-2015 J.A. Woltjer.
  All rights reserved.
  
  This program is free software: you can redistribute it and/or modify
@@ -17,7 +17,7 @@
  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <ImplementPlanter.h>
+#include "ImplementPlanter.h"
 
 //------------
 // Constructor
@@ -93,7 +93,7 @@ ImplementPlanter::ImplementPlanter(VehicleGps * _gps){
   dxte = 0;         //DXTE
 
   hist_count = 0;   //Counter of sum
-  hist_time = 25;   //Integration time (seconds * 5)
+  hist_time = 25;   //Integration time (seconds * 5) == 5 in this case
 
   // PID variables
   P = 0;
@@ -184,6 +184,9 @@ ImplementPlanter::ImplementPlanter(VehicleTractor * _tractor){
 
   // Setpoint of ajust loop
   setpoint = 0;
+  
+  // Speed
+  speed = 0;
 
   // PID integration and differentiation intervals
   for (int i = 0; i < 50; i++){
@@ -364,6 +367,18 @@ void ImplementPlanter::adjust(int _direction){
   last_position = _actual_position;
 }
 
+// ------------------------------
+// Method for stopping implement
+// ------------------------------
+void ImplementPlanter::stop(){
+  digitalWrite(OUTPUT_WIDE, LOW);
+  digitalWrite(OUTPUT_NARROW, LOW);
+#ifndef RELAY
+  digitalWrite(OUTPUT_BYPASS, LOW);
+#endif
+  digitalWrite(OUTPUT_LED, LOW);
+}
+
 // --------------------------------------------
 // Method for measuring actual implement offset
 // --------------------------------------------
@@ -435,7 +450,7 @@ void ImplementPlanter::setSetpoint(){
   int _D_factor;
   int _xte_cor = xte + offset;
 
-  _previous_hist_count= hist_count - 1;
+  _previous_hist_count = hist_count - 1;
 
   if (hist_count >= hist_time) {
     hist_count = 0;

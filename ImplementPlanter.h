@@ -22,9 +22,9 @@
 
 #include <Arduino.h>
 #include <EEPROM.h>
-#include <ConfigImplementPlanter.h>
-#include <VehicleGps.h>
-#include <VehicleTractor.h>
+#include "ConfigImplementPlanter.h"
+#include "VehicleGps.h"
+#include "VehicleTractor.h"
 
 // software version of this library
 #define PLANTER_VERSION 0.1
@@ -119,6 +119,7 @@ public:
 
   void update(byte _mode);
   void adjust(int _direction);
+  void stop();
   void calibrate();
 
   // ----------------------------------------------------------------
@@ -129,7 +130,7 @@ public:
   }
   
   inline void commitCalibration(){
-    wipeCalibrationData();
+    //wipeCalibrationData();
     writeCalibrationData();
   }
   

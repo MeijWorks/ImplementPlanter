@@ -20,9 +20,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define ConfigImplementPlanter_h
 
 #define GPS
-#define VOORSERIE
-#define RELAY
-//#define FACTORY
+//#define VOORSERIE
+//#define RELAY
+#define FACTORY
 //#define DEBUG
 
 #ifndef VOORSERIE
